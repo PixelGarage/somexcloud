@@ -1,0 +1,121 @@
+<?php
+
+/**
+ * Implementation of hook_form_quiz_results_manage_results_form_alter().
+ */
+function excel_export_form_alter(&$form, &$form_state, $form_id) {
+  global $user;
+
+  $rid = 5;
+   if (array_key_exists($rid, $user->roles)){
+    if ($form_id == 'quiz_results_manage_results_form') {
+      $form['excel_export'] = array(
+        '#type' => 'submit',
+        '#value' => 'Export to Excel',
+        '#submit' => array('excel_export_result'),
+      );
+    }
+  }
+}
+
+function excel_export_result() {
+  $quiz = node_load(intval(arg(1)));
+  $res = _quiz_results_mr_data_provider('', $quiz);
+
+  $columnData = array('name', 'started', 'finished', 'duration', 'score', 'evaluated');
+  $columnCount = 'A';
+  $rows = array();
+  foreach ($columnData as $value) {
+    $rows['0'][] = $value;
+    $columnCount++;
+  }
+
+  global $user;
+
+  $directory = 'public://nodes_export';
+  if (!file_prepare_directory($directory, FILE_MODIFY_PERMISSIONS | FILE_CREATE_DIRECTORY)) {
+    drupal_set_message(t('Failed to create %directory.', array('%directory' => $directory)), 'error');
+    return FALSE;
+  }
+
+  $path = libraries_get_path('PHPExcel');
+
+  require_once DRUPAL_ROOT . '/' . $path . '/PHPExcel.php';
+
+  $PHPExcel = new PHPExcel();
+
+  $PHPExcel->getProperties()
+      ->setCreator($user->name)
+      ->setLastModifiedBy($user->name)
+      ->setTitle('Office 2003 XLS Document')
+      ->setSubject('Office 2003 XLS Document')
+      ->setDescription('Document for Office 2003 XLS, generated using PHP classes.')
+      ->setKeywords('office 2003 openxml php')
+      ->setCategory('Nodes export result file');
+
+  $rowCount = 1;
+
+  foreach ($res as $value) {
+    $rows[] = array(
+      $value->name,
+      format_date($value->started, 'short'),
+      $value->finished == 0 ? t('In progress') : format_date($value->finished, 'short'),
+      $value->finished == 0 ? t('In progress') : _quiz_format_duration($value->duration),
+      $value->finished == 0 ? t('In progress') : check_plain($value->score),
+      $value->evaluated == 0 ? t('No') : t('Yes'),
+    );
+
+    $rowCount++;
+  }
+
+  $PHPExcel->getActiveSheet()->fromArray($rows);
+
+  for ($i = 'A'; $i !== $columnCount; $i++) {
+    $PHPExcel->getActiveSheet()->getColumnDimension($i)->setAutoSize(TRUE);
+  }
+
+  $styleArray = array(
+    'borders' => array(
+      'allborders' => array(
+        'style' => PHPExcel_Style_Border::BORDER_THIN,
+      ),
+    ),
+  );
+
+  $PHPExcel->getActiveSheet()->getStyle('A1:' . $columnCount . $rowCount)->applyFromArray($styleArray);
+  $PHPExcel->getActiveSheet()->getStyle('A1:' . $columnCount . $rowCount)->getAlignment()->setVertical(PHPExcel_Style_Alignment::VERTICAL_TOP)->setHorizontal(PHPExcel_Style_Alignment::HORIZONTAL_LEFT)->setWrapText(TRUE);
+  $PHPExcel->getActiveSheet()->setTitle('PHPExcel Example');
+  $PHPExcel->setActiveSheetIndex(0);
+
+  $filename = intval(arg(1))  . '_results_' . date('d_m_Y', REQUEST_TIME) . '.xls';
+
+  $path = file_create_filename($filename, 'public://nodes_export');
+
+  $objWriter = PHPExcel_IOFactory::createWriter($PHPExcel, 'Excel5');
+  $objWriter->save($path);
+
+  $file = new stdClass();
+  $file->fid = NULL;
+  $file->uri = $path;
+  $file->filename = drupal_basename($path);
+  $file->filemime = file_get_mimetype($path);
+  $file->uid = $user->uid;
+  $file->status = FILE_STATUS_PERMANENT;
+  file_save($file);
+
+  $http_headers = array(
+    'Content-Type' => 'application/vnd.ms-excel',
+    'Content-Disposition' => 'attachment; filename="' . drupal_basename($path) . '"',
+    'Content-Length' => filesize($path),
+  );
+
+  if (strpos($_SERVER['HTTP_USER_AGENT'], 'MSIE')) {
+    $http_headers['Cache-Control'] = 'must-revalidate, post-check=0, pre-check=0';
+    $http_headers['Pragma'] = 'public';
+  }
+  else {
+    $http_headers['Pragma'] = 'no-cache';
+  }
+
+  file_transfer($path, $http_headers);
+}

@@ -1,0 +1,7 @@
+name = Excel Export
+description = Allows export nodes to *.xls file
+core = 7.x
+
+package = Excel Export
+
+dependencies[] = libraries

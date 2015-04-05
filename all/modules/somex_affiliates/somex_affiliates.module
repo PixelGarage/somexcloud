@@ -1,0 +1,334 @@
+<?php
+
+/**
+ * Implements hook_permissions().
+ */
+
+function somex_affiliates_permission() {
+  return array(
+    'administer affiliates' => array(
+      'title' => t('Administer affiliates'),
+      'description' => t(''),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ */
+
+function somex_affiliates_menu() {
+
+	$items['admin/affiliates'] = array(
+		'title' => 'Affiliates',
+		'access arguments' => array('administer affiliates'),
+		'page callback' => '_somex_affiliates_list',
+	);
+
+	$items['admin/affiliates/add'] = array(
+		'title' => t('Add'),
+		'access arguments' => array('administer affiliates'),
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('_somex_affiliates_add_edit_form'),
+		'type' => MENU_LOCAL_TASK,
+		'weight' => 5,
+	);
+	
+	$items['admin/affiliates/edit/%somex_affiliate'] = array(
+		'title' => 'Edit affiliate',
+		'access arguments' => array('administer affiliates'),
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('_somex_affiliates_add_edit_form', 3),
+	);
+	
+	$items['admin/affiliates/delete/%somex_affiliate'] = array(
+		'title' => t('Delete affiliate'),
+		'access arguments' => array('administer affiliates'),
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('_somex_affiliates_delete_confirm_form', 3),
+	);
+	
+	$items['somexaf/%somex_affiliate'] = array(
+		'page callback' => '_somex_affiliates_click',
+		'type' => MENU_CALLBACK,
+		'page arguments' => array(1),
+		'access callback' => TRUE,
+	);
+
+	return $items;
+}
+
+/**
+ * Implements hook_menu_local_tasks_alter().
+ */
+function somex_affiliates_menu_local_tasks_alter(&$data, $router_item, $root_path) {
+  if ($root_path == 'admin/affiliates') {
+    $item = menu_get_item('admin/affiliates/add');
+    if ($item['access']) {
+      $data['actions']['output'][] = array(
+        '#theme' => 'menu_local_action',
+        '#link' => $item,
+      );
+    }
+  }
+}
+
+function somex_affiliate_load($id) {
+	$matches = array();
+	if (preg_match('/^u(\\d+)$/i', $id, $matches)) {
+		$u = user_load($matches[1]);
+		return array(
+			'id' => 'u' . $u->uid,
+			'name' => $u->name,
+			'email' => $u->mail,
+			'valid_from' => date('Y-m-d', $u->created),
+			'valid_until' => '2050-12-31'
+		);
+	} else {
+		 $query = db_select('somex_affiliates', 'sa');
+		 $query->fields('sa', array())
+					 ->condition('id', $id);
+		 return $query->execute()->fetchAssoc();
+	}
+}
+
+/**
+ * Implements hook_token_info().
+ */
+
+function somex_affiliates_token_info() {
+	$type = array(
+    'name' => t('Somexcloud Affiliate'), 
+    'description' => t('Tokens related to the affiliate tracked.')
+  );
+	// Core tokens for nodes.
+  $affiliate['id'] = array(
+    'name' => t("Affiliate ID"), 
+    'description' => t("The unique ID of the affiliate."),
+  );
+  $affiliate['name'] = array(
+    'name' => t("Affiliate Name"), 
+    'description' => t("The name of the affiliate."),
+  );
+  $affiliate['email'] = array(
+    'name' => t("Affiliate E-mail"), 
+    'description' => t("The E-mail of the affiliate."),
+  );
+  $affiliate['from'] = array(
+    'name' => t("Starting date"), 
+    'description' => t("Starting date for the affiliate tracking"), 
+    'type' => 'date',
+  );
+  $affiliate['until'] = array(
+    'name' => t("Finishing date"), 
+    'description' => t("Finishing date for the affiliate tracking"), 
+    'type' => 'date',
+  );
+  return array(
+    'types' => array('affiliate' => $type), 
+    'tokens' => array('affiliate' => $affiliate),
+  );
+}
+
+/**
+ * Implements hook_tokens().
+ */
+
+function somex_affiliates_tokens($type, $tokens, array $data = array(), array $options = array()) {
+  $replacements = array();
+  $sanitize = !empty($options['sanitize']);
+	if ($type == 'affiliate') {
+		$affiliate = somex_affiliate_get_current_affiliate();
+		if ($affiliate) {
+			foreach ($tokens as $name => $original) {
+				switch ($name) {
+					case 'id':
+						$replacements[$original] = $sanitize ? filter_xss($affiliate['id']) : $affiliate['id'];
+						break;
+					case 'name':
+						$replacements[$original] = $sanitize ? filter_xss($affiliate['name']) : $affiliate['name'];
+						break;
+					case 'email':
+						$replacements[$original] = $sanitize ? filter_xss($affiliate['email']) : $affiliate['email'];
+						break;
+					case 'from':
+						$replacements += token_generate('date', $tokens, array('date' => strtotime($affiliate['valid_from'])), $options);
+						break;
+					case 'until':
+						$replacements += token_generate('date', $tokens, array('date' => strtotime($affiliate['valid_until'])), $options);
+						break;
+				}
+			}
+		}
+	}
+	return $replacements;
+}
+
+function somex_affiliate_get_current_affiliate() {
+	return isset( $_COOKIE['somex_affiliates'] ) ? somex_affiliate_load( $_COOKIE['somex_affiliates'] ) : false;
+}
+function _somex_affiliates_list() {
+  $header = array(
+    array('data' => t('ID'), 'field' => 'id', 'sort' => 'asc'),
+    array('data' => t('Name'), 'field' => 'name'),
+    array('data' => t('Email'), 'field' => 'email'),
+    array('data' => t('From'), 'field' => 'valid_from'),
+    array('data' => t('Until'), 'field' => 'valid_until'),
+    array('data' => t('Action'), NULL),
+  );
+  $query = db_select('somex_affiliates', 'sa')->extend('PagerDefault')->extend('TableSort');
+  $query
+    ->fields('sa', array('id', 'name', 'email', 'valid_from', 'valid_until'));
+  $result = $query
+    ->limit(50)
+    ->orderByHeader($header)
+    ->execute();
+  $rows = array();
+  foreach ($result as $data) {
+    $rows[] = array(
+      array('data' => $data->id),
+      array('data' => $data->name),
+      array('data' => $data->email),
+      array('data' => empty($data->valid_from) ? '-' : format_date(strtotime($data->valid_from), 'short')),
+      array('data' => empty($data->valid_until) ? '-' : format_date(strtotime($data->valid_until), 'short')),
+      array('data' => l('edit', 'admin/affiliates/edit/' . $data->id) . ' ' . l('delete', 'admin/affiliates/delete/' . $data->id)),
+    );
+  }
+  $build['affiliates_list'] = array(
+    '#theme' => 'table',
+    '#header' => $header,
+    '#rows' => $rows,
+    '#empty' => t('No affiliates available.'),
+  );
+  $build['affiliates_list_pager'] = array('#theme' => 'pager');
+  return $build;
+}
+
+function _somex_affiliates_add_edit_form($form, &$form_state, $affiliate = FALSE) {
+
+  $form['affiliate'] = array(
+    '#type'  => 'fieldset',
+    '#title' => $affiliate ? t('Edit an affiliate') : t('Add an affiliate'),
+  );
+
+  $form['affiliate']['name'] = array(
+    '#type'          => 'textfield',
+    '#title'         => t('Name'),
+    '#default_value' => $affiliate ? $affiliate['name'] : '',
+    '#size'          => 30,
+    '#maxlength'     => 30,
+    '#required' => TRUE,
+  );
+
+  $form['affiliate']['email'] = array(
+    '#type'          => 'textfield',
+    '#title'         => t('E-Mail'),
+    '#default_value' => $affiliate ? $affiliate['email'] : '',
+    '#size'          => 30,
+    '#maxlength'     => 30,
+    '#required' => TRUE,
+  );
+	$valid_from = '';
+	$valid_until = array('year' => 2050, 'month' => 12, 'day' => 31);
+	if ($affiliate) {
+		$_vf = strtotime($affiliate['valid_from']);
+		$valid_from = array(
+			'year' => date('Y', $_vf),
+			'month' => date('n', $_vf),
+			'day' => date('j', $_vf)
+		);
+		$_vu = strtotime($affiliate['valid_until']);
+		$valid_until = array(
+			'year' => date('Y', $_vu),
+			'month' => date('n', $_vu),
+			'day' => date('j', $_vu)
+		);
+	}
+	$form['affiliate']['valid_from'] = array(
+    '#type'          => 'date',
+    '#title'         => t('Valid Since'),
+    '#default_value' => $valid_from,
+    '#required' => TRUE,
+  );
+  $form['affiliate']['valid_until'] = array(
+    '#type'          => 'date',
+    '#title'         => t('Valid Until'),
+    '#default_value' => $valid_until,
+    '#required' => TRUE,
+  );
+  
+  $form['affiliate']['submit'] = array(
+    '#type'  => 'submit',
+    '#value' => t('Save'),
+  );
+
+  return $form;
+
+}
+
+function _somex_affiliates_add_edit_form_validate($form_id, &$form_state) {
+	if (!valid_email_address($form_state['values']['email'])) {
+		form_set_error('email', 'The email address appears malformed');
+	}
+}
+
+function _somex_affiliates_add_edit_form_submit($form_id, &$form_state) {
+	$affiliate = !empty($form_state['build_info']['args']) ? $form_state['build_info']['args'][0] : FALSE;
+	$form_values = $form_state['values'];
+	if (!$affiliate) {
+		db_insert('somex_affiliates')
+        ->fields(array(
+          'name' => $form_values['name'],
+          'email' => $form_values['email'],
+          'valid_from' => $form_values['valid_from']['year'] . '-' . $form_values['valid_from']['month'] . '-' . $form_values['valid_from']['day'],
+          'valid_until' => $form_values['valid_until']['year'] . '-' . $form_values['valid_until']['month'] . '-' . $form_values['valid_until']['day'],
+        ))
+        ->execute();      
+    drupal_set_message('Affiliate has been added.');
+	} else {
+		db_update('somex_affiliates')
+        ->fields(array(
+          'name' => $form_values['name'],
+          'email' => $form_values['email'],
+          'valid_from' => $form_values['valid_from']['year'] . '-' . $form_values['valid_from']['month'] . '-' . $form_values['valid_from']['day'],
+          'valid_until' => $form_values['valid_until']['year'] . '-' . $form_values['valid_until']['month'] . '-' . $form_values['valid_until']['day'],
+        ))
+        ->condition('id', $affiliate['id'])
+        ->execute();      
+    drupal_set_message('Affiliate has been edited.');
+	}
+	drupal_goto('admin/affiliates');
+}
+
+function _somex_affiliates_delete_confirm_form($form, &$form_state, $affiliate) {
+  return confirm_form($form,
+    t('Are you sure you want to delete %title?', array('%title' => $affiliate['name'])),
+    'admin/affiliates',
+    t('This action cannot be undone.'),
+    t('Delete'),
+    t('Cancel')
+  );
+}
+
+function _somex_affiliates_delete_confirm_form_submit($form, &$form_state) {
+	$affiliate = !empty($form_state['build_info']['args']) ? $form_state['build_info']['args'][0] : FALSE;
+	if ($affiliate) {
+		db_delete('somex_affiliates')
+			->condition('id', $affiliate['id'])
+			->execute();
+		drupal_set_message('Affiliate has been deleted.');
+	}
+	drupal_goto('admin/affiliates');
+}
+function _somex_affiliates_click($affiliate) {
+	if (strtotime($affiliate['valid_from']) < REQUEST_TIME && strtotime($affiliate['valid_until']) > REQUEST_TIME) {
+		setcookie('somex_affiliates', $affiliate['id'], time() + 86400, '/');
+	}
+	$current_url = (isset($_SERVER['HTTPS']) && (strtolower($_SERVER['HTTPS']) == 'on' || $_SERVER['HTTPS'] == 1)) ||
+		(isset($_SERVER['SERVER_PORT']) && (443 == $_SERVER['SERVER_PORT'])) ? 'https://' : 'http://';
+	$current_url .= $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+	$current_url = preg_replace('$somexaf/([^/]+)/?$', '', $current_url);
+	$current_url = str_replace(url('somexaf/' . $affiliate['id']), '', $current_url);
+	header('location: ' . $current_url);
+	exit();
+}

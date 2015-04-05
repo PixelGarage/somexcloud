@@ -1,0 +1,6 @@
+name = Somexcloud Affiliates
+description = "A module that allows affiliate click-throughs to be tracked."
+core = 7.x
+
+files[] = affiliates.module
+files[] = affiliates.install

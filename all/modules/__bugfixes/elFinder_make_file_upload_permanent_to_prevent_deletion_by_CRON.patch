@@ -1,0 +1,27 @@
+Index: sites/all/modules/elfinder/editors/ckeditor/ckeditor.upload.inc
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- sites/all/modules/elfinder/editors/ckeditor/ckeditor.upload.inc	(date 1418057551000)
++++ sites/all/modules/elfinder/editors/ckeditor/ckeditor.upload.inc	(revision )
+@@ -35,6 +35,12 @@
+ 
+   $file = file_save_upload('upload', array(), $dest);
+ 
++  // BUG fix: make file permanent (temporary files are deleted by CRON after a while)
++  if ($file) {
++    $file->status = FILE_STATUS_PERMANENT;
++    file_save($file);
++  }
++
+   header('Content-Type: text/html');
+   
+   print '<script type="text/javascript">';
+@@ -49,4 +55,4 @@
+   print '</script>';
+ 
+   exit();
+-}
+\ No newline at end of file
++}

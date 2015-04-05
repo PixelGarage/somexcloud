@@ -1,0 +1,1 @@
+<?php print str_replace('&amp;', '&', $output); ?>

@@ -1,0 +1,308 @@
+<?php
+function somex_og_query_mylektions_alter($query) {
+	$gids = og_get_groups_by_user(NULL, 'node');
+	$query2 = new EntityFieldQuery();
+	$result = $query2->entityCondition('entity_type', 'node')
+		->entityCondition('bundle', 'lektion')
+		->propertyCondition('status', 1)
+		->fieldCondition('field_modules', 'target_id', $gids, 'IN')
+		->execute();
+	if (!empty($result['node'])) {
+		$query->condition('node_field_data_field_lektion.nid', array_keys($result['node']), 'IN');
+	}
+}
+/**
+ * Implements hook_og_membership_insert().
+ */
+function somex_og_og_membership_insert($og_membership) {
+  somex_og_og_membership_propagate_create($og_membership);
+}
+
+/**
+* Implements hook_username_alter().
+*/
+function somex_og_username_alter(&$name, $account) {
+  // Display the user's uid instead of name.
+  if (isset($account->uid)) {
+  	$account = user_load($account->uid);
+  	if (!empty($account->field_name)) {
+	    $name = $account->field_name[LANGUAGE_NONE][0]['value'];
+	  }
+  }
+}
+/**
+ * Implements hook_user_view_alter().
+ *
+ * Change the user profile picture to use the preferred image style.
+ */
+function somex_og_user_view_alter(&$build) {
+  if (isset($build['user_picture']['#markup']) && $build['#view_mode'] == 'modules_experten') {
+    $picture = theme('user_picture', array('account' => $build['#account'], 'user_picture_style' => 'experten_thumb'));
+    $build['user_picture']['#markup'] = $picture;
+  }
+}
+
+function somex_og_menu_alter(&$items) {
+	unset($items['user/%/myresults']);
+}
+
+/**
+ * Alter user access.
+ *
+ * @param $allow
+ *   Whether the action is permitted to be taken. Change this only if you can
+ *   decide conclusively that the action is definitely (not) permitted.
+ * @param $op
+ *   The action being taken. One of add, converse, delete, edit, view,
+ *   view_stream, generate.
+ * @param $args
+ *   An array of additional arguments. Varies depending on $op.
+ * @see statuses_user_access()
+ */
+function somex_og_statuses_user_access_alter(&$allow, $op, $args) {
+  global $user;
+  switch ($op) {
+    case 'view':
+    	$status = $args[0];
+      if ($status->type == 'og') {
+	      $allow = og_is_member('node', $status->recipient, 'user', $user);
+      }
+      break;
+  }
+}
+
+/**
+ * Implements hook_statuses_context_info().
+ */
+function somex_og_statuses_context_info() {
+  return array(
+    'somex' => array(
+      'title' => t('Somex Context'),
+      'handler' => 'somex_statuses_context',
+      'view' => 'activity_stream',
+      'weight' => -99
+    ),
+    'somexog' => array(
+      'title' => t('Somex OG Context'),
+      'handler' => 'somex_og_statuses_context',
+      'view' => 'activity_stream',
+      'weight' => -100
+    ),
+  );
+}
+class somex_statuses_context extends statuses_context {
+  function type() {
+    return 'somex';
+  }
+  function is_applicable() {
+    return arg(0) == 'activity-stream';
+  }
+  function find_recipient() {
+  	return 0;
+  }
+  function load_recipient($id) {
+  	return 0;
+  }
+  function load_random_recipient() {
+    return 0;
+  }
+  function recipient_id($recipient) {
+		return 0;
+  }
+  function recipient_url($recipient) {
+ 		return url('<front>');
+  }
+  function recipient_name($recipient) {
+	  return variable_get('site_name', 'Drupal');
+  }
+}
+class somex_og_statuses_context extends somex_statuses_context {
+	function type() {
+    return 'somexog';
+  }
+  function is_applicable() {
+    return arg(0) == 'activity-stream' && is_numeric(arg(1));
+  }
+  function find_recipient() {
+  	return node_load(arg(1));
+  }
+  function load_recipient($id) {
+  	return node_load($id);
+  }
+  function load_random_recipient() {
+    return 0;
+  }
+  function recipient_id($recipient) {
+  	return isset($recipient->nid) ? $recipient->nid : 0;
+  }
+  function recipient_url($recipient) {
+    return 'node/' . $recipient->nid;
+  }
+  function recipient_name($recipient) {
+    return $recipient->title;
+  }
+  function access_add($recipient, $sender) {
+  	if (og_is_group('node', $recipient->nid)) {
+			return parent::access_add($recipient, $sender) && og_is_member('node', $recipient->nid, 'user', $sender);
+		}
+    return FALSE;
+  }
+  function access_delete($status, $account) {
+  	if (og_is_group('node', $status->recipient)) {
+			return parent::access_delete($status, $account) || og_user_access('node', $status->recipient, 'administer group', $account);
+		}
+    return parent::access_delete($status, $account);
+  }
+  function access_view($status, $account) {
+    if (og_is_group('node', $status->recipient)) {
+      return parent::access_view($status, $account) && og_is_member('node', $status->recipient, 'user', $account);
+    }
+    return parent::access_view($status, $account);
+  }
+  function access_stream($recipient, $account) {
+    if (og_is_group('node', $recipient->nid)) {
+      return parent::access_stream($recipient, $account) && og_is_member('node', $recipient->nid, 'user', $account);
+    }
+    return parent::access_stream($recipient, $account);
+  }
+}
+/**
+* Implements hook_entity_info_alter().
+*/
+function somex_og_entity_info_alter(&$entity_info) {
+  $entity_info['user']['view modes']['autoren'] = array(
+    'label' => t('Autoren'),
+    'custom settings' => TRUE,
+  );
+  $entity_info['user']['view modes']['modules_experten'] = array(
+    'label' => t('Modules Experten'),
+    'custom settings' => TRUE,
+  );
+  $entity_info['user']['view modes']['experten'] = array(
+    'label' => t('Experten'),
+    'custom settings' => TRUE,
+  );
+  $entity_info['node']['view modes']['preview'] = array(
+    'label' => t('Preview'),
+    'custom settings' => TRUE,
+  );
+}
+/**
+ * Propagates group membership to associated groups. Uses options set in the
+ * OG Subgroups administration page to determine propagation direction and
+ * entity type and bundle.
+ *
+ * @param OgMembership $og_membership
+ *   The OG membership that is being inserted or updated.
+ */
+function somex_og_og_membership_propagate_create($og_membership) {
+  // Extract entity info from group to get entity bundle. This way we can
+  // be sure to load the correct bundle name for all entity types.
+  $group = entity_load_single($og_membership->group_type, $og_membership->gid);
+  $group_info = entity_extract_ids($og_membership->group_type, $group);
+  $group_bundle = $group_info[2];
+  if ($group_bundle == 'klasse') {
+		$group_content = entity_load_single($og_membership->entity_type, $og_membership->etid);
+		$group_content_info = entity_extract_ids($og_membership->entity_type, $group_content);
+		$group_content_bundle = $group_content_info[2];
+		if ($group_content_bundle == 'user') {
+			$new_groups = array();
+			$kurse = og_get_entity_groups($og_membership->group_type, $group);
+			if (!empty($kurse)) {
+				foreach ($kurse as $type => $gids) {
+					foreach ($gids as $gid) {
+						$new_groups[] = $gid;
+						$kurse_entity = node_load($gid);						
+						$children = somex_og_get_group_entities('node', $kurse_entity);
+						if (!empty($children) && !empty($children['node'])) {
+							$children_entities = node_load_multiple($children['node']);
+							foreach ($children_entities as $child) {
+								if ($child->type == 'module') {
+									$new_groups[] = $child->nid;
+								}
+							}
+						}
+					}
+				}
+			}
+			$field_names = og_get_group_audience_fields('user', 'user', FALSE);
+			$field_name = key($field_names);
+			foreach ($new_groups as $gid) {
+				if ( !og_get_membership('node', $gid, $og_membership->entity_type, $og_membership->etid) ) {
+					$new_membership = og_membership_create('node', $gid, $og_membership->entity_type, $og_membership->etid, $field_name);
+					$new_membership->save();
+				}
+			}
+		}
+	}
+}
+
+/**
+ * Get children entities that are associated with a group.
+ *
+ * @param $entity_type
+ *   The entity type. Defaults to 'user'
+ * @param $entity
+ *   Optional; The entity object or entity ID. If empty, and $entity_type is
+ *   "user", the current user will be used.
+ * @param $states
+ *   Optional; Array with the state to return. Defaults to active.
+ *
+ * @return
+ *  An array with the entities' entity type as the key, and array - keyed by
+ *  the OG membership ID and the Entity ID as the value. If nothing found,
+ *  then an empty array.
+ */
+function somex_og_get_group_entities($entity_type = 'user', $entity = NULL, $states = array(OG_STATE_ACTIVE)) {
+  $cache = &drupal_static(__FUNCTION__, array());
+
+  if ($entity_type == 'user' && empty($entity)) {
+    global $user;
+    $entity = clone $user;
+  }
+  if (is_object($entity)) {
+    // Get the entity ID.
+    list($id) = entity_extract_ids($entity_type, $entity);
+  }
+  else {
+    $id = $entity;
+  }
+
+  // Get a string identifier of the states, so we can retrieve it from cache.
+  if ($states) {
+    sort($states);
+    $state_identifier = implode(':', $states);
+  }
+  else {
+    $state_identifier = 0;
+  }
+
+  if (isset($cache[$entity_type][$id][$state_identifier])) {
+    // Return cached values.
+    return $cache[$entity_type][$id][$state_identifier];
+  }
+
+  $cache[$entity_type][$id][$state_identifier] = array();
+
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'og_membership', '=');
+  $query->propertyCondition('entity_type', $entity_type, '=');
+  $query->propertyCondition('gid', $id, '=');
+
+  if ($states) {
+    $query->propertyCondition('state', $states, 'IN');
+  }
+
+  $result = $query->execute();
+
+  if (!empty($result['og_membership'])) {
+    // Get the group ID from the group membership.
+    $og_memberships = og_membership_load_multiple(array_keys($result['og_membership']));
+    foreach ($og_memberships as $og_membership) {
+      $cache[$entity_type][$id][$state_identifier][$og_membership->group_type][$og_membership->id] = $og_membership->etid;
+    }
+  }
+
+  return $cache[$entity_type][$id][$state_identifier];
+}
+

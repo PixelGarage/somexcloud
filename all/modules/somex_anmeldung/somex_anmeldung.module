@@ -1,0 +1,330 @@
+<?php
+/**
+ * Implements hook_menu().
+ */
+function somex_anmeldung_menu() {
+  $items = array();
+  $items['admin/config/somex'] = array(
+    'title' => 'Somex Settings',
+    'description' => 'Administer the Somex settings.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('somex_admin_settings'),
+    'access arguments' => array('administer site configuration')
+  );
+  return $items;
+}
+function somex_admin_settings() {
+  $form = array();
+  $form['somex_beratung_uid'] = array(
+    '#type' => 'textfield',
+    '#title' => t('ID of the user displayed at Beratung block'),
+    '#default_value' => variable_get('somex_beratung_uid', 1),
+    '#maxlength' => 3,
+    '#required' => TRUE,
+  );
+
+  return system_settings_form($form);
+}
+/**
+ * Implements hook_block_info().
+ */
+function somex_anmeldung_block_info() {
+  $blocks['beratung'] = array(
+    'info' => t('Beratung'), 
+  );
+  return $blocks;
+}
+/**
+ * Implements hook_block_view().
+ */
+function somex_anmeldung_block_view($delta = '') {
+  $block = array();
+  switch ($delta) {
+    case 'beratung':
+      $block['subject'] = 'Beratung';
+      $block['content'] = views_embed_view('autoren', 'beratung', variable_get('somex_beratung_uid', 1));
+      break;
+  }
+  return $block;
+}
+
+/**
+ * Implements hook_node_load().
+ */
+function somex_anmeldung_node_load($nodes, $types) {
+	foreach ($nodes as $nid => $node) {
+		if ($nid == 585) {
+			$kourses = _somex_anmeldung_get_kourses_and_klasses();
+			$node->_course_info = $kourses;
+			$cid = 50;
+			$new_components = array();
+			foreach ($kourses as $knid => $details) {
+				$color = empty($details['node']->field_color) ? '000' : $details['node']->field_color[LANGUAGE_NONE][0]['value'];
+				$picture = empty($details['node']->field_icon) ? '' : '<img src="' . image_style_url('icon', $details['node']->field_icon[LANGUAGE_NONE][0]['uri']) . '" alt="' . $details['node']->title . '" />';
+				$render = field_view_field('node', $details['node'], 'body',  array(
+					'label'=>'hidden',
+					'type' => 'text_summary_or_trimmed',
+					'settings'=>array('trim_length' => 300),
+				));
+				$description = render($render);
+				$description .= '<div class="more_details">' . l('Weitere Details', 'node/' . $knid) . '</div>';
+				if (!empty($details['node']->field_kosten)) {
+					$render = field_view_field('node', $details['node'], 'field_kosten',  array(
+						'label'=>'inline'
+					));
+					$description .= '<div class="preise" style="background-color: #' . $color . ';">' . render($render) . '</div>';
+				}
+				$description .= '<a class="green_button" href="#edit-next">zur Anmeldung</a>';
+				$fieldset = array(
+					'nid' => $nid,
+					'cid' => $cid,
+					'pid' => 0,
+					'weight' => -18,
+					'type' => 'fieldset',
+					'page_num' => 1,
+					'form_key' => 'course_' . $knid,
+					'name' => '<span class="bg_title" style="background-color: #' . $color . ';">' . $picture . $details['node']->title . '</span>',
+					'mandatory' => 0,
+					'value' => NULL,
+					'extra' => array(
+						'collapsible' => 1,
+						'title_display' => 1,
+						'description' => $description,
+					)
+				);
+				webform_component_defaults($fieldset);
+				$options = array();
+				foreach ($details['klasses'] as $date => $k_options) {
+					foreach ($k_options as $nnid => $title) {
+						$options[] = 'klasse_' . $nnid . '|' . 'Beginn: ' . format_date(strtotime($date), 'custom', 'j. F Y') . ', ' . $title;
+					}
+				}
+				$klass_select = array(
+					'nid' => $nid,
+					'cid' => $cid + 1,
+					'pid' => $cid,
+					'weight' => -18,
+					'type' => 'select',
+					'page_num' => 1,
+					'form_key' => 'klasses',
+					'name' => 'W&#228;hlen Sie hier Ihr gew&#252;nschter Lehrgang aus:',
+					'mandatory' => 0,
+					'value' => NULL,
+					'extra' => array(
+						'items' => implode(PHP_EOL, $options),
+						'multiple' => 0,
+						'title_display' => 'before',
+						'aslist' => 1
+					)
+				);
+				webform_component_defaults($klass_select);
+				$new_components[$cid] = $fieldset;
+				$new_components[$cid + 1] = $klass_select;
+				$cid += 2;
+			}
+			$nodes[$nid]->webform['components'] = $new_components + $nodes[$nid]->webform['components'];
+		}
+	}
+}
+
+function _somex_after_build_kontakt($form_element, &$form_state) {
+  //only do this when the form is being submitted NOT displayed
+  if (!empty($form_state['input'])) {
+  	if (isset($form_state['input']['submitted']['use_same_info']) && isset($form_state['input']['submitted']['use_same_info_2'])) {
+  		$form_element['#required'] = $form_state['input']['submitted']['use_same_info'] != 'Privatadresse' || $form_state['input']['submitted']['use_same_info_2'] != 'Privatadresse';
+  	}
+  }
+  return $form_element;
+}
+function somex_anmeldung_sfweb2lead_webform_posted_data_alter(&$data, $context) {
+	$data = array(
+		'oid' => variable_get('sfweb2lead_webform_oid', '')
+	);
+	$mappings = array(
+		27 => 'salutation',
+		3 => 'last_name',
+		4 => 'first_name',
+		5 => 'street',
+		30 => '00ND0000004UlGZ',
+		6 => '00ND0000004UlGe',
+		7 => 'email',
+		8 => 'phone',
+		31 => 'company',
+		33 => '00ND0000004Um2e',
+		34 => '00ND0000004VuGx',
+		11 => '00ND0000004VuGs',
+		12 => '00ND0000004VuGi',
+		13 => '00ND0000003bSDV',
+		32 => '00ND0000004UJ5O',
+		14 => '00ND0000003bSCx',
+		15 => '00ND0000003bSDf',
+		16 => '00ND0000003bSDa',
+		17 => '00ND0000003bSDk',
+		35 => '00ND0000003bSDp',
+		25 => '00ND0000003aq64'
+	);
+	$products = array();
+	foreach ($context['webform_submission']->data as $key => $value) {
+		if ($key >= 50 && !empty($value['value'][0])) {
+			$classe_nid = substr($value['value'][0], 7);
+			$classe = node_load($classe_nid);
+			$products[] = $classe->title . ' [ID: ' . $classe->nid . ']';
+		} elseif (array_key_exists($key, $mappings) && !empty($value['value'][0])) {
+			$data[$mappings[$key]] = $value['value'][0];
+		}
+	}
+	if (!empty($products)) {
+		$data['00ND0000004VuHC'] = implode(PHP_EOL, $products);
+	}
+	$data['lead_source'] = 'Web';
+	$affiliate = somex_affiliate_get_current_affiliate();
+	if ($affiliate) {
+		$data['00ND0000003aqRL'] = $affiliate['name'] . ' [ID: ' . $affiliate['id'] . ']';
+		$data['00ND0000004SA5h'] = url('somexaf/' . $affiliate['id'], array('absolute' => true));
+	}
+}
+/**
+ * Implements hook_form_alter().
+ */
+function somex_anmeldung_form_alter(&$form, &$form_state, $form_id) {
+	if ($form_id == 'webform_client_form_585') {
+		$has_courses = false;
+		if (isset($form['submitted']['kontakt_2'])) {
+			$second_fieldset_keys = array('firma', 'funktion', 'Anrede', 'name', 'vorname', 'strasse', 'plz', 'ort', 'email', 'telephon');
+			foreach ($second_fieldset_keys as $key) {
+				$form['submitted']['kontakt_2'][$key]['#after_build'][] = '_somex_after_build_kontakt';
+				$form['submitted']['kontakt_2'][$key]['#pre_render'][] = 'webform_elment_pre_render_add_required';
+			}
+		}
+		foreach ($form['submitted'] as $key => $field) {
+			if ($field['#type'] == 'fieldset' && substr($key, 0, 7) == 'course_') {
+				$has_courses = true;
+				$form['submitted'][$key]['#attributes']['class'][] = 'kurse-item';
+				$form['submitted'][$key]['#title'] = $field['#webform_component']['name'];
+				$form['submitted'][$key]['#description'] = $field['#webform_component']['extra']['description'];
+				$form['submitted'][$key]['clearer'] = array(
+					'#type' => 'markup',
+					'#markup' => '<br style="clear: both;" />',
+				);
+			}
+		}
+		if ($has_courses) {
+			$form['#validate'][] = '_somex_anmeldung_check_courses';
+		}
+		if (!empty($form_state['values']) && $form_state['values']['details']['page_num'] == 1) {
+			$table = '<h2 class="anmeldung_detauils_header">Ihre Auswahl</h2>' .
+							 '<table class="anmeldung_details" cellpadding="0" cellspacing="0">' .
+								'<thead>' .
+									'<tr><th class="product">Produkt</th><th class="discount">Rabatt</th><th class="price">Kosten</th></tr>' .
+								'</thead>' .
+								'<tbody>';
+			$courses_qty = 0;
+			$with_discount = 0;
+			$amount_for_discount = 0;
+			$amount = 0;
+			if (!empty($form_state['values']['submitted_tree'])) {
+				foreach ($form_state['values']['submitted_tree'] as $key => $value) {
+					if (substr($key, 0, 7) == 'course_') {
+						$course = $form['#node']->_course_info[substr($key, 7)];
+						if (!empty($value['klasses'])) {
+							$nnid = substr($value['klasses'], 7);
+							foreach ($course['klasses'] as $date => $k_options) {
+								if (array_key_exists($nnid, $k_options)) {
+									if ($course['node']->type == 'lehrgang') {
+										$with_discount++;
+										$amount_for_discount += $course['node']->field_kosten[LANGUAGE_NONE][0]['value'];
+									}
+									$courses_qty++;
+									$amount += $course['node']->field_kosten[LANGUAGE_NONE][0]['value'];
+									$render = field_view_field('node', $course['node'], 'field_kosten',  array('label'=>'hidden'));
+									$table .= '<tr><td class="product" colspan="2">' . check_plain($course['node']->title) . ' mit ' . check_plain('Start ' . format_date(strtotime($date), 'custom', 'j. F Y') . ', ' . $k_options[$nnid]) . '</td>' .
+																 '<td class="price">' . render($render) . '</td></tr>';
+								}
+							}
+						}
+					}
+				}
+			}
+			if ($with_discount >= 2) {
+				$discount = round($amount_for_discount * 0.1);
+				$amount -= $discount;
+				$table .= '<tr class="discount"><td class="product">Kombirabatt mehrere Lehrg&#228;nge</td><td class="discount">10%</td><td class="price">CHF -' . $discount . '.-</td></tr>';
+			}
+			$table .= '</tbody>' .
+								'<tfoot><tr><td class="product" colspan="2">Total</td><td class="price">CHF ' . $amount . '.-</td></tr></tfoot>' .
+							'</table>';
+			if ($courses_qty >= 1) {
+				$form['order_details'] = array(
+					'#type' => 'markup',
+					'#weight' => 100,
+					'#markup' => $table,
+				);
+			}
+			$form['actions']['previous']['#attributes'] ['onclick'] = 'javascript: window.location=\'' . url('node/585') . '\'; return false;';
+			$form['actions']['previous']['#weight'] = $form['actions']['submit']['#weight'] + 1;
+		} else {
+			unset($form['captcha']);
+		}
+	}
+}
+function _somex_anmeldung_check_courses($form, &$form_state) {
+	$found_course = FALSE;
+	if (!empty($form_state['values']['submitted'])) {
+		if ($form_state['values']['details']['page_num'] != 1) {
+			$found_course = TRUE;
+		} else {
+			foreach ($form_state['values']['submitted'] as $key => $value) {
+				if (substr($key, 0, 7) == 'course_') {
+					if (!empty($value['klasses'])) {
+						$found_course = TRUE;
+						break;
+					}
+				}
+			}
+		}
+	}
+	if (!$found_course) {
+		form_set_error('', t('You must select a course'));
+	}
+}
+function _somex_anmeldung_get_kourses_and_klasses() {
+	$response = array();
+	
+	$query = new EntityFieldQuery();
+
+	$query->entityCondition('entity_type', 'node')
+		->entityCondition('bundle', 'klasse')
+		->propertyCondition('status', 1)
+		->fieldCondition('field_datum', 'value', date('Y-m-d'), '>=');
+	
+	$result = $query->execute();
+	if (isset($result['node'])) {
+		$klasses_nids = array_keys($result['node']);
+		$klasses = entity_load('node', $klasses_nids);
+		foreach ($klasses as $klass) {
+			if (!empty($klass->field_ausgebucht) && $klass->field_ausgebucht[LANGUAGE_NONE][0]['value']) continue;
+			if (!empty($klass->og_group_ref)) {
+				foreach ($klass->og_group_ref[LANGUAGE_NONE] as $ksl) {
+					$kourse_nid = $ksl['target_id'];
+					if (!array_key_exists($kourse_nid, $response)) {
+						$response[$kourse_nid] = array('klasses' => array());
+					}
+					$date = $klass->field_datum[LANGUAGE_NONE][0]['value'];
+					if (!array_key_exists($date, $response[$kourse_nid]['klasses'])) {
+						$response[$kourse_nid]['klasses'][$date] = array();
+					}
+					$response[$kourse_nid]['klasses'][$date][$klass->nid] = $klass->field_day_time[LANGUAGE_NONE][0]['value'];
+				}
+			}
+		}
+		$kurses = entity_load('node', array_keys($response));
+		foreach ($kurses as $nid => $kurse) {
+			if (!in_array($kurse->type, array('kurse', 'lehrgang', 'seminare'))) {
+				unset($response[$nid]);
+			} else {
+				$response[$nid]['node'] = $kurse;
+			}
+		}
+	}
+	return $response;
+}
